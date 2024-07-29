@@ -1,119 +1,66 @@
-import os
-import re
 import pandas as pd
 import matplotlib.pyplot as plt
-from openpyxl import load_workbook
-from openpyxl.utils import column_index_from_string, get_column_letter
+import seaborn as sns
 import streamlit as st
-from pathlib import Path
-import tempfile
 
-def process_files(files, start_col, end_col, start_row, temp_dir):
-    start_col_index = column_index_from_string(start_col)
-    end_col_index = column_index_from_string(end_col)
-    all_data = []
+# Configurar estilo de los gráficos
+sns.set(style="whitegrid")
 
-    for uploaded_file in files:
-        file_path = uploaded_file.name
-        match = re.search(r'AvanceVentasINTI\.(\d{4})\.(\d{2})\.(\d{2})\.', file_path)
-        if match:
-            year, month, day = match.groups()
-        else:
-            year, month, day = "", "", ""
+# Función para generar gráficos
+def generate_plots(df):
+    # Histograma de la edad
+    st.write("### Distribución de Edad")
+    plt.figure(figsize=(10, 6))
+    sns.histplot(df['age'], bins=10, kde=True, color='skyblue')
+    st.pyplot(plt.gcf())
+    plt.clf()
 
-        wb = load_workbook(filename=uploaded_file, read_only=True)
-        sheet = wb['ITEM_O']
+    # Gráfico de torta para la variable 'target'
+    st.write("### Distribución de Objetivo (Target)")
+    target_counts = df['target'].value_counts()
+    plt.figure(figsize=(8, 8))
+    plt.pie(target_counts, labels=target_counts.index, autopct='%1.1f%%', colors=['lightcoral', 'lightskyblue'])
+    plt.title('Distribución de Objetivo')
+    st.pyplot(plt.gcf())
+    plt.clf()
 
-        data = []
-        for row in sheet.iter_rows(min_row=start_row, min_col=start_col_index, max_col=end_col_index):
-            data.append([cell.value for cell in row])
+    # Gráfico de dispersión con regresión lineal simple
+    st.write("### Regresión Lineal: Presión Arterial vs Colesterol")
+    plt.figure(figsize=(10, 6))
+    sns.lmplot(x='restingBP', y='serumcholestrol', data=df, aspect=1.5, scatter_kws={'s':100}, line_kws={'color':'red'})
+    plt.title('Regresión Lineal de Presión Arterial vs Colesterol')
+    st.pyplot(plt.gcf())
+    plt.clf()
 
-        df = pd.DataFrame(data)
-        df['ANIO'] = year
-        df['MES'] = month
-        df['DIA'] = day
+    # Gráfico de barras para el recuento de la variable 'target'
+    st.write("### Conteo de Objetivo")
+    plt.figure(figsize=(8, 5))
+    sns.countplot(x='target', data=df, palette='viridis')
+    st.pyplot(plt.gcf())
+    plt.clf()
 
-        all_data.append(df)
+    # Boxplot de 'oldpeak' por 'target'
+    st.write("### Oldpeak por Objetivo")
+    plt.figure(figsize=(10, 6))
+    sns.boxplot(x='target', y='oldpeak', data=df, palette='Set2')
+    st.pyplot(plt.gcf())
+    plt.clf()
 
-    final_df = pd.concat(all_data, ignore_index=True)
+# Interfaz de usuario de Streamlit
+st.title('Análisis de Datos de Pacientes')
 
-    column_names = [get_column_letter(i) for i in range(start_col_index, end_col_index + 1)]
-    column_names.extend(['ANIO', 'MES', 'DIA'])
-    final_df.columns = column_names
+uploaded_file = st.file_uploader("Selecciona un archivo CSV", type="csv")
 
-    output_path = os.path.join(temp_dir, 'Out.xlsx')
-    final_df.to_excel(output_path, index=False)
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    st.write(f"Datos cargados: {uploaded_file.name}")
+    
+    if not df.empty:
+        st.write("### Vista previa de los datos")
+        st.write(df.head())
 
-    generate_charts(final_df, temp_dir)
-
-    return final_df, output_path
-
-def generate_charts(df, temp_dir):
-    chart_folder = os.path.join(temp_dir, 'charts')
-    if not os.path.exists(chart_folder):
-        os.makedirs(chart_folder)
-
-    for column in df.columns:
-        if df[column].dtype in ['int64', 'float64']:
-            plt.figure()
-            df[column].hist()
-            plt.title(f'Histograma de {column}')
-            hist_path = os.path.join(chart_folder, f'{column}_hist.png')
-            plt.savefig(hist_path)
-            plt.close()
-
-        if df[column].dtype == 'object' or df[column].dtype.name == 'category':
-            plt.figure()
-            df[column].value_counts().plot.pie(autopct='%1.1f%%')
-            plt.title(f'Torta de {column}')
-            pie_path = os.path.join(chart_folder, f'{column}_pie.png')
-            plt.savefig(pie_path)
-            plt.close()
-
-# Interfaz de usuario con Streamlit
-st.title("Proceso ETL")
-
-uploaded_files = st.file_uploader("Seleccione archivos de la carpeta deseada:", type=["xlsx"], accept_multiple_files=True)
-
-if uploaded_files:
-    start_column = st.text_input("Columna inicial (ej. A):").upper()
-    end_column = st.text_input("Columna final (ej. P):").upper()
-    start_row = st.number_input("Fila inicial:", min_value=1, step=1, value=1)
-
-    if st.button("Procesar archivos"):
-        if start_column and end_column and start_row:
-            with st.spinner("Procesando archivos..."):
-                try:
-                    # Create a temporary directory
-                    with tempfile.TemporaryDirectory() as temp_dir:
-                        final_df, output_file_path = process_files(uploaded_files, start_column, end_column, start_row, temp_dir)
-                        
-                        # Provide download links
-                        st.success("Proceso completado.")
-                        st.dataframe(final_df.head())
-                        
-                        # Provide link to download the excel file
-                        with open(output_file_path, 'rb') as f:
-                            st.download_button(
-                                label="Descargar archivo Excel",
-                                data=f,
-                                file_name='Out.xlsx'
-                            )
-
-                        # Provide links to download the charts
-                        chart_folder = os.path.join(temp_dir, 'charts')
-                        for image_file in os.listdir(chart_folder):
-                            image_path = os.path.join(chart_folder, image_file)
-                            with open(image_path, 'rb') as img:
-                                st.download_button(
-                                    label=f"Descargar {image_file}",
-                                    data=img,
-                                    file_name=image_file
-                                )
-                        
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
-        else:
-            st.warning("Por favor, complete todos los campos.")
+        generate_plots(df)
+    else:
+        st.error("El archivo CSV está vacío.")
 else:
-    st.info("Por favor, seleccione archivos de la carpeta que desea procesar.")
+    st.info("Por favor, sube un archivo CSV para analizar.")
